@@ -1,0 +1,976 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dr eggbot · 一个专门造 Bot 的 Bot 是怎么分工的</title>
+<style>
+:root{
+  --bg:#07090D; --ink:#EEF1F6; --dim:#8B93A1; --dim2:#5A6170; --line:rgba(255,255,255,.09);
+  --egg:#FF4B55; --egg2:#FF8A6B; --blue:#5EB1FF; --amber:#FFB547; --green:#3DDC97; --red:#FF5C6C;
+  --cyan:#4FD1C5; --violet:#A78BFA;
+  --sans:"PingFang SC","Noto Sans SC","Source Han Sans SC","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#030406;overflow:hidden;font-family:var(--sans);color:var(--ink);-webkit-font-smoothing:antialiased}
+#stage{position:absolute;left:50%;top:50%;width:1600px;height:900px;transform-origin:center;overflow:hidden;
+  background:radial-gradient(1100px 700px at 80% -15%,rgba(255,75,85,.11),transparent 60%),
+             radial-gradient(900px 600px at -5% 115%,rgba(94,177,255,.08),transparent 60%),var(--bg)}
+#stage::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px);background-size:32px 32px;
+  -webkit-mask-image:radial-gradient(ellipse at center,#000 30%,transparent 80%);mask-image:radial-gradient(ellipse at center,#000 30%,transparent 80%)}
+#stage::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+/* ── 通用 ── */
+.scene{position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .5s}
+.scene.active{opacity:1;pointer-events:auto}
+.a{position:absolute}
+.ic{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.025));border:1px solid var(--line);
+  border-radius:18px;backdrop-filter:blur(24px);box-shadow:0 24px 60px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06)}
+.pop{opacity:0;transform:scale(.86) translateY(12px);transition:opacity .5s,transform .6s cubic-bezier(.2,.9,.3,1.25),border-color .4s,box-shadow .4s,background .4s}
+.pop.in{opacity:1;transform:none}
+.fade{opacity:0;transition:opacity .6s}
+.fade.in{opacity:1}
+.rise{opacity:0;transform:translateY(24px);transition:opacity .8s,transform .8s cubic-bezier(.2,.8,.2,1)}
+.rise.in{opacity:1;transform:none}
+.draw path,.draw circle{stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset 1.4s cubic-bezier(.6,0,.3,1)}
+.draw.in path,.draw.in circle{stroke-dashoffset:0}
+.hd{position:absolute;left:80px;top:54px;opacity:0;transform:translateY(14px);transition:.7s cubic-bezier(.2,.8,.2,1)}
+.hd.in{opacity:1;transform:none}
+.hd .eb{font:600 15px var(--mono);letter-spacing:.2em;color:var(--egg2);display:flex;align-items:center;gap:12px}
+.hd .eb::before{content:"";width:26px;height:2px;background:var(--egg2);border-radius:2px}
+.hd h2{font-size:46px;font-weight:800;margin:12px 0 0;letter-spacing:.01em}
+.pill{display:inline-flex;align-items:center;gap:10px;padding:10px 22px;border-radius:999px;background:rgba(255,255,255,.05);
+  border:1px solid var(--line);font-size:22px;color:#dfe4ec}
+.pill b{color:var(--egg2);font-family:var(--mono);font-size:24px}
+.cur{position:absolute;left:1500px;top:900px;width:34px;height:34px;opacity:0;z-index:40;pointer-events:none;
+  transition:left .8s cubic-bezier(.45,.05,.2,1),top .8s cubic-bezier(.45,.05,.2,1),opacity .3s}
+.cur.in{opacity:1}
+.cur svg{filter:drop-shadow(0 4px 10px rgba(0,0,0,.6))}
+.cur .rip{position:absolute;left:-22px;top:-22px;width:44px;height:44px;border-radius:50%;border:2px solid #fff;opacity:0}
+.cur.click .rip{animation:rip .6s ease-out}
+@keyframes rip{0%{transform:scale(.3);opacity:1}100%{transform:scale(1.6);opacity:0}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shake{20%{transform:translateX(-9px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(3px)}}
+@keyframes bob{50%{transform:translateY(-9px)}}
+@keyframes breathe{50%{box-shadow:0 0 0 6px rgba(255,181,71,.12),0 0 34px rgba(255,181,71,.35)}}
+@keyframes pulseB{50%{box-shadow:0 0 0 8px rgba(94,177,255,.12),0 0 40px rgba(94,177,255,.5)}}
+
+/* ── 控制条 / 字幕 ── */
+#cap{position:absolute;left:50%;top:788px;transform:translate(-50%,8px);padding:11px 30px;border-radius:999px;
+  background:rgba(10,12,18,.78);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(14px);
+  font-size:25px;font-weight:600;white-space:nowrap;opacity:0;transition:opacity .35s,transform .35s;z-index:30;letter-spacing:.02em}
+#cap.show{opacity:1;transform:translate(-50%,0)}
+#bar{position:absolute;left:40px;right:40px;bottom:16px;height:34px;display:flex;align-items:center;justify-content:space-between;z-index:35;
+  font:13px var(--mono);color:var(--dim2);letter-spacing:.06em}
+.dots{display:flex;gap:8px}
+.dot{width:8px;height:8px;border-radius:4px;background:rgba(255,255,255,.18);cursor:pointer;transition:.3s}
+.dot.on{width:30px;background:var(--egg)}
+.btns{display:flex;gap:8px;align-items:center}
+.btns button{width:36px;height:30px;border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--dim);
+  font:15px var(--mono);cursor:pointer}
+.btns button:hover{color:var(--ink);border-color:rgba(255,255,255,.25)}
+#prog{position:absolute;left:0;top:0;right:0;height:3px;background:rgba(255,255,255,.05);z-index:35}
+#prog i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--egg),var(--egg2))}
+
+/* ── 00 片头 ── */
+.glowb{width:520px;height:520px;border-radius:50%;background:radial-gradient(circle,rgba(255,75,85,.30),transparent 65%);opacity:0;transition:opacity 1.4s}
+.glowb.in{opacity:1}
+.rings i{position:absolute;left:-130px;top:-130px;width:260px;height:260px;border-radius:50%;border:1.5px solid rgba(255,90,90,.55);opacity:0}
+.rings.in i{animation:ring 3.6s ease-out infinite}
+.rings.in i:nth-child(2){animation-delay:1.2s}
+.rings.in i:nth-child(3){animation-delay:2.4s}
+@keyframes ring{0%{transform:scale(.6);opacity:.8}100%{transform:scale(2.3);opacity:0}}
+.drop{opacity:0;transform:translateY(-280px)}
+.drop.in{opacity:1;transform:none;transition:transform 1.1s cubic-bezier(.34,1.56,.64,1),opacity .3s}
+.bob{animation:bob 3.2s ease-in-out infinite}
+.t-title{font-size:128px;font-weight:800;letter-spacing:-.025em;text-align:center;margin:0;line-height:1;
+  background:linear-gradient(180deg,#fff 30%,#b9c0cc);-webkit-background-clip:text;background-clip:text;color:transparent}
+.t-sub{font-size:34px;color:var(--dim);text-align:center;margin:0;letter-spacing:.06em}
+.row-c{display:flex;justify-content:center;gap:16px}
+
+/* ── 01 门卫 ── */
+.arc{fill:none;stroke:rgba(255,255,255,.12);stroke-width:7;stroke-linecap:round;transition:stroke .5s,filter .5s}
+.arc.on{stroke:var(--egg);filter:drop-shadow(0 0 10px rgba(255,75,85,.8))}
+.core{fill:rgba(255,255,255,.02);stroke:rgba(255,255,255,.08);stroke-width:1.5;transition:fill .3s,stroke .3s}
+.gate.ok .core{fill:rgba(61,220,151,.12);stroke:var(--green)}
+.gate.no .core{fill:rgba(255,92,108,.12);stroke:var(--red)}
+.gate.no{animation:shake .45s}
+.lab{opacity:.15;transition:opacity .5s,transform .5s;transform:scale(.96)}
+.lab.on{opacity:1;transform:none}
+.lab .lt{font-size:28px;font-weight:800}
+.lab .ls{font-size:20px;color:var(--dim);margin-top:4px}
+.req{width:340px;height:58px;border-radius:29px;display:flex;align-items:center;justify-content:center;gap:10px;font-size:22px;
+  opacity:0;transform:translateX(-90px);z-index:5;
+  transition:transform .6s cubic-bezier(.2,.8,.2,1),opacity .4s,border-color .3s,background .3s,color .3s}
+.req .ic{color:var(--dim)}
+.req.in{opacity:1;transform:translateX(0)}
+.req.at{transform:translateX(300px)}
+.req.pass{animation:pass 1.6s forwards;border-color:var(--green);color:#d2ffeb;background:rgba(61,220,151,.12)}
+.req.rej{animation:rej 1.4s forwards;border-color:var(--red);color:#ffd5d9;background:rgba(255,92,108,.14)}
+@keyframes pass{0%{transform:translateX(300px)}35%{transform:translateX(630px) scale(.7)}70%{transform:translateX(960px) scale(.95);opacity:1}100%{transform:translateX(1110px) scale(.4);opacity:0}}
+@keyframes rej{0%{transform:translateX(300px)}12%{transform:translateX(332px)}28%{transform:translateX(255px)}38%{transform:translateX(282px) rotate(-3deg)}100%{transform:translateX(210px) translateY(250px) rotate(-16deg);opacity:0}}
+.dest{display:flex;align-items:center;justify-content:center;gap:12px;font-size:23px;font-weight:700;transition:border-color .4s,box-shadow .4s}
+.dest .ic{color:var(--egg2)}
+.dest.glow{border-color:var(--green);box-shadow:0 0 0 1px var(--green),0 0 50px rgba(61,220,151,.4)}
+.why{font-size:26px;color:var(--red);font-weight:700;text-align:center;opacity:0;transform:translateY(10px);transition:.4s}
+.why.in{opacity:1;transform:none}
+
+/* ── 02 总图 ── */
+.ln{width:200px;padding:12px 16px 12px 18px;border-left:3px solid var(--lc)}
+.ln .t{font-size:22px;font-weight:800}
+.ln .e{font:12.5px var(--mono);color:var(--dim);margin:2px 0 6px}
+.ln .g{font:600 12.5px var(--mono);color:var(--lc);letter-spacing:.02em}
+.st{width:66px;height:66px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.04);
+  border:1.5px solid rgba(255,255,255,.18);color:#c9d0db}
+.st .ic{width:28px;height:28px}
+.st.ev{border-color:var(--blue);color:var(--blue);box-shadow:0 0 24px rgba(94,177,255,.25)}
+.st.wt{border-color:var(--amber);color:var(--amber)}
+.st.hl.ev{animation:pulseB 1.2s infinite}
+.st.hl.wt,.human.hl{animation:breathe 1.2s infinite}
+.colh{width:150px;text-align:center;font-size:18px;font-weight:700;color:var(--dim)}
+.colh b{font-family:var(--mono);color:var(--egg2);margin-right:6px}
+.colh.ev{color:var(--blue)} .colh.wt{color:var(--amber)}
+.human{border-radius:44px;border:1.5px solid var(--amber);background:rgba(255,181,71,.07);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:16px;color:var(--amber);font-weight:800;font-size:28px}
+.human .ic{width:36px;height:36px}
+.human .vt{writing-mode:vertical-rl;font-size:20px;letter-spacing:.35em;color:#ffd99c;font-weight:600}
+.lines path{fill:none;stroke:rgba(255,255,255,.16);stroke-width:2}
+.flow path{fill:none;stroke-width:2;stroke-dasharray:3 12;opacity:0;transition:opacity .6s;animation:dash 1s linear infinite}
+.run .flow path{opacity:.7}
+@keyframes dash{to{stroke-dashoffset:-15}}
+.tok{position:absolute;left:0;width:18px;height:18px;border-radius:50%;background:var(--lc);box-shadow:0 0 18px 3px var(--lc),inset 0 0 4px #fff;opacity:0}
+.run .tok{animation:tokrun 7s linear infinite}
+@keyframes tokrun{0%{transform:translateX(560px);opacity:0}4%{opacity:1}
+  10%,16%{transform:translateX(626px)}26%,32%{transform:translateX(806px)}42%,48%{transform:translateX(986px)}
+  58%,68%{transform:translateX(1166px)}78%,92%{transform:translateX(1346px)}97%{transform:translateX(1450px);opacity:1}100%{transform:translateX(1460px);opacity:0}}
+
+/* ── 03 设计 Bot ── */
+.q{width:500px;height:62px;display:flex;align-items:center;gap:14px;padding:0 20px;font-size:21px;border-radius:16px}
+.q .ic{color:var(--dim)}
+.q .qs{margin-left:auto;display:flex;align-items:center}
+.q .okk{color:var(--green);opacity:0;transform:scale(.3);transition:.4s cubic-bezier(.3,1.6,.5,1)}
+.q.ok{border-color:rgba(61,220,151,.45)}
+.q.ok .okk{opacity:1;transform:none}
+.q .skt{color:var(--amber);font-size:16px;font-weight:700;opacity:0;transition:.4s;white-space:nowrap}
+.q.skip{opacity:.55!important}
+.q.skip .skt{opacity:1}
+.q.skip .qt{text-decoration:line-through;text-decoration-color:var(--red);text-decoration-thickness:2px;color:var(--dim)}
+.prof{padding:0;overflow:hidden}
+.prof.pass{border-color:rgba(94,177,255,.7);box-shadow:0 0 0 1px rgba(94,177,255,.4),0 0 60px rgba(94,177,255,.22)}
+.ph{display:flex;gap:16px;align-items:center;padding:22px 26px;border-bottom:1px solid var(--line);height:96px}
+.av{width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,#ffc27a,#ff6b5a);display:grid;place-items:center;
+  font-weight:900;font-size:24px;color:#3a1206}
+.pn{font-size:26px;font-weight:800}
+.pm{font:14px var(--mono);color:var(--dim)}
+.pr{position:relative;padding:18px 26px;border-bottom:1px solid rgba(255,255,255,.05);height:100px;transition:background .4s}
+.pr:last-of-type{border-bottom:0}
+.pk{font:700 14px var(--mono);color:var(--egg2);letter-spacing:.12em}
+.pv{font-size:22px;margin-top:8px}
+.pr .ck{position:absolute;right:24px;top:36px;width:30px;height:30px;color:var(--blue);opacity:0;transform:scale(.3);transition:.35s cubic-bezier(.3,1.6,.5,1);stroke-width:2.6}
+.pr.ok{background:rgba(94,177,255,.07)}
+.pr.ok .ck{opacity:1;transform:none}
+.type{clip-path:inset(0 100% 0 0);transition:clip-path .9s steps(16)}
+.type.in{clip-path:inset(0 0 0 0)}
+.beam{position:absolute;left:0;right:0;top:96px;height:3px;background:linear-gradient(90deg,transparent,var(--blue),transparent);
+  box-shadow:0 0 22px 5px rgba(94,177,255,.5);opacity:0}
+.beam.in{animation:beam 2s ease-in-out forwards}
+@keyframes beam{0%{opacity:0;top:96px}10%{opacity:1}90%{opacity:1;top:494px}100%{opacity:0;top:494px}}
+.stamp{position:absolute;right:24px;top:26px;border:3px solid var(--blue);color:var(--blue);font-weight:900;font-size:22px;padding:3px 14px;
+  border-radius:10px;transform:rotate(-9deg) scale(2.2);opacity:0;transition:.35s cubic-bezier(.3,1.4,.5,1);letter-spacing:.12em;background:rgba(7,9,13,.6)}
+.stamp.in{opacity:1;transform:rotate(-9deg) scale(1)}
+.toast{width:300px;height:60px;display:flex;align-items:center;justify-content:center;gap:10px;font-size:23px;font-weight:800;color:var(--green);
+  background:rgba(61,220,151,.1);border:1px solid rgba(61,220,151,.45);border-radius:14px;opacity:0;transform:translateY(-16px);transition:.5s}
+.toast .ic{stroke-width:2.6}
+.toast .strike{position:absolute;left:-8px;right:-8px;top:50%;height:4px;border-radius:2px;background:var(--red);transform:scaleX(0);transform-origin:left;transition:transform .45s}
+.toast.in{opacity:1;transform:none}
+.toast.x{opacity:.6}
+.toast.x .strike{transform:scaleX(1)}
+.ne{font-size:34px;font-weight:900;color:var(--red)}
+.out{padding:20px 24px;font-size:19px;line-height:1.55;color:var(--dim)}
+.out .o1{font:700 13px var(--mono);letter-spacing:.14em;color:var(--blue)}
+.out b{display:block;color:var(--ink);font-size:26px;margin:6px 0 2px}
+.nx{display:flex;align-items:center;gap:10px;font-size:21px;color:#ffc6cb}
+.nx .ic{color:var(--red);stroke-width:2.4}
+.arrw path{fill:none;stroke:var(--egg2);stroke-width:2.5;stroke-dasharray:4 8;animation:dash 1s linear infinite}
+
+/* ── 04 对话巡检 ── */
+.ch{font-size:19px;padding:8px 18px}
+.ch .ic{color:var(--blue);width:22px;height:22px}
+.rl .t{font-size:21px;font-weight:800}
+.rl .s{font:13px var(--mono);color:var(--dim)}
+.trkl{height:0;border-top:1.5px dashed rgba(255,255,255,.13)}
+.bb{height:26px;border-radius:13px;background:rgba(255,255,255,.12);transition:background .3s,box-shadow .3s}
+.bb.u{background:rgba(255,255,255,.3)}
+.bb.hit{background:var(--amber);box-shadow:0 0 22px rgba(255,181,71,.9)}
+.co{font-size:17.5px;color:#ffe3b3;opacity:0;transform:translateY(8px) scale(.95);transition:.4s cubic-bezier(.3,1.4,.5,1);
+  background:rgba(40,28,8,.85);border:1px solid rgba(255,181,71,.45);border-radius:10px;padding:6px 12px;white-space:nowrap}
+.co .tag{font:800 13px var(--sans);color:#1a1200;background:var(--amber);border-radius:5px;padding:1px 7px;margin-right:8px}
+.co.hit{opacity:1;transform:none}
+.gone{font:20px var(--mono);color:var(--dim2);letter-spacing:.2em}
+.axis{font:13px var(--mono);color:var(--dim2)}
+.scanner{width:3px;height:340px;background:linear-gradient(180deg,transparent,var(--blue),transparent);box-shadow:0 0 22px 5px rgba(94,177,255,.45);opacity:0}
+.scanner.in{opacity:1;transform:translateX(750px);transition:transform 5s linear,opacity .3s}
+.scanner.in.done{opacity:0}
+.win{border:1.5px solid rgba(94,177,255,.35);border-radius:16px;background:rgba(94,177,255,.03);transform-origin:right;transform:scaleX(0);transition:transform 1s cubic-bezier(.6,0,.3,1)}
+.win.in{transform:none}
+.pan{padding:22px;display:flex;flex-direction:column;gap:12px}
+.pan .ph2{font-size:15px;font:700 14px var(--mono);letter-spacing:.14em;color:var(--blue)}
+.sg{padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.04);border:1px solid var(--line);opacity:0;transform:translateX(34px);transition:.5s cubic-bezier(.2,.8,.2,1)}
+.sg.in{opacity:1;transform:none}
+.sg .ty{font:800 13px var(--mono);padding:2px 9px;border-radius:6px}
+.ty.sk{background:rgba(255,138,107,.18);color:var(--egg2)} .ty.bt{background:rgba(79,209,197,.16);color:var(--cyan)} .ty.rt{background:rgba(167,139,250,.18);color:var(--violet)}
+.sg .tt{font-size:20px;font-weight:800;margin:8px 0 4px}
+.sg .qq{font-size:16px;color:var(--dim)}
+.waitbar{display:flex;align-items:center;gap:10px;color:var(--amber);font-weight:800;font-size:20px;border:1.5px dashed rgba(255,181,71,.55);
+  border-radius:12px;padding:10px 14px;opacity:0;transition:opacity .5s}
+.waitbar.in{opacity:1;animation:breathe 1.6s infinite}
+.quiet{display:flex;align-items:center;gap:16px;padding:0 22px;height:76px;font-size:20px}
+.quiet .lbq{color:var(--dim)}
+.quiet .qi{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:rgba(255,255,255,.06);position:relative}
+.quiet .qi svg{position:absolute;transition:.35s}
+.quiet .qm{opacity:0;transform:scale(.4);color:var(--dim)}
+.quiet .qb{color:var(--blue)}
+.quiet.ring .qb{animation:shake .5s 2}
+.quiet .msg{padding:6px 14px;border-radius:12px;background:rgba(94,177,255,.12);border:1px solid rgba(94,177,255,.35);color:#d6ebff;transition:.4s}
+.quiet .res{font-weight:800;color:var(--green);opacity:0;transition:.4s}
+.quiet.mute .qb{opacity:0;transform:scale(.4)}
+.quiet.mute .qm{opacity:1;transform:none}
+.quiet.mute .msg{opacity:.35;text-decoration:line-through;text-decoration-color:var(--red)}
+.quiet.mute .res{opacity:1}
+
+/* ── 05 定时任务巡检 ── */
+.tk{width:450px;height:190px;overflow:hidden}
+.tk::after{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(90deg,transparent,rgba(94,177,255,.22),transparent);transform:translateX(-100%);pointer-events:none}
+.tk.scan::after{animation:sweep .7s ease-out}
+@keyframes sweep{to{transform:translateX(100%)}}
+.mclk{position:absolute;left:26px;top:24px}
+.mclk circle{fill:rgba(255,255,255,.04);stroke:rgba(255,255,255,.25);stroke-width:2}
+.mclk .hand{stroke:var(--ink);stroke-width:3;stroke-linecap:round;transform-origin:35px 35px;animation:spin var(--sp,6s) linear infinite}
+.mclk .still{animation:none;transform:rotate(130deg);stroke:var(--dim2)}
+.tk .tn{position:absolute;left:116px;top:24px;font-size:25px;font-weight:800}
+.tk .ts{position:absolute;left:116px;top:62px;font:16px var(--mono);color:var(--dim)}
+.tk .tst{position:absolute;left:26px;right:26px;top:122px;display:flex;align-items:center;gap:12px}
+.fl,.fl2{font:800 15px var(--sans);padding:5px 11px;border-radius:8px;background:rgba(255,92,108,.16);color:var(--red);opacity:0;transform:scale(.6);transition:.35s cubic-bezier(.3,1.5,.5,1);white-space:nowrap}
+.fl.g{background:rgba(61,220,151,.15);color:var(--green)}
+.fl2{display:none;background:rgba(61,220,151,.15);color:var(--green)}
+.fx{font-size:19px;color:#dfe4ec;opacity:0;transform:translateX(-8px);transition:.4s .1s;white-space:nowrap}
+.tk.hit{border-color:rgba(255,92,108,.55)}
+.tk.fine{border-color:rgba(61,220,151,.5)}
+.tk.hit .fl,.tk.hit .fx,.tk.fine .fl,.tk.fine .fx{opacity:1;transform:none}
+.tk.dead .mclk,.tk.dead .tn{opacity:.45}
+.lockb{position:absolute;right:16px;top:16px;display:flex;gap:6px;align-items:center;font-size:15px;font-weight:700;color:var(--amber);
+  border:1px solid rgba(255,181,71,.45);padding:3px 11px;border-radius:999px;opacity:0;transform:scale(.7);transition:.35s cubic-bezier(.3,1.5,.5,1)}
+.lockb .ic{width:16px;height:16px}
+.tk.lock .lockb{opacity:1;transform:none}
+.tk.fixed{border-color:var(--green);box-shadow:0 0 40px rgba(61,220,151,.25)}
+.tk.fixed .fl{display:none}
+.tk.fixed .fl2{display:inline-block;opacity:1;transform:none}
+.tk.fixed .lockb{opacity:0}
+.nb{position:absolute;right:22px;top:64px;font-size:14px;padding:4px 10px;border-radius:10px 10px 10px 2px;background:rgba(255,255,255,.1);color:var(--dim);animation:nb 2.2s infinite}
+@keyframes nb{0%,100%{opacity:0;transform:translateY(6px)}20%,70%{opacity:1;transform:none}}
+.rib{display:flex;align-items:center;gap:14px;padding:0 26px}
+.rib .rh{width:180px;flex:none}
+.rib .rh b{display:block;font-size:22px}
+.rib .rh span{font-size:15px;color:var(--dim)}
+.rp{font-size:18px;padding:11px 16px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);white-space:nowrap;
+  opacity:0;transform:translateY(10px);transition:.45s cubic-bezier(.2,.8,.2,1)}
+.rp i{font-style:normal;font:800 14px var(--mono);color:var(--red);margin-right:8px}
+.rp.in{opacity:1;transform:none}
+.rp.done{border-color:var(--green);background:rgba(61,220,151,.14);color:#c9ffe6}
+.rp.done i{color:var(--green)}
+
+/* ── 06 闹钟 ── */
+.pnl{width:580px;height:470px}
+.pnl .clk{position:absolute;left:170px;top:26px;filter:grayscale(1) brightness(.55);transition:filter .7s}
+.pnl.on .clk{filter:none}
+.pnl.ring .clk{animation:shake .45s 3}
+.clk .face{fill:rgba(255,255,255,.03);stroke:rgba(255,255,255,.22);stroke-width:2}
+.clk .tks line{stroke:rgba(255,255,255,.35);stroke-width:3;stroke-linecap:round}
+.clk .hh{stroke:var(--ink);stroke-width:7;stroke-linecap:round}
+.clk .mh{stroke:var(--ink);stroke-width:4.5;stroke-linecap:round}
+.clk .sec{stroke:var(--egg);stroke-width:2.5;stroke-linecap:round;transform-origin:120px 120px}
+.pnl.on .clk .sec{animation:spin 6s linear infinite}
+.clk .hub{fill:var(--egg)}
+.clk .dg{font:700 26px var(--mono);fill:var(--egg2);text-anchor:middle}
+.pnl .pt{position:absolute;left:0;right:0;top:282px;text-align:center;font-size:28px;font-weight:800}
+.pnl .pt small{display:block;font:14px var(--mono);color:var(--dim);font-weight:400;margin-top:2px}
+.pnl .pd{position:absolute;left:0;right:0;top:350px;display:flex;justify-content:center;gap:8px}
+.pd span{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font-size:16px;background:rgba(255,255,255,.04);color:var(--dim2);border:1px solid var(--line)}
+.pd span.d{color:var(--ink);border-color:rgba(255,138,107,.5);background:rgba(255,138,107,.12)}
+.pnl .prw{position:absolute;left:0;right:0;top:406px;display:flex;justify-content:center;align-items:center;gap:16px;font:18px var(--mono);color:var(--dim)}
+.prw .v0{color:var(--red);font-weight:700} .prw .v1{color:var(--green);font-weight:700;display:none}
+.pnl.on .prw .v0{display:none} .pnl.on .prw .v1{display:inline}
+.prw.blink{animation:blink .45s 4}
+@keyframes blink{50%{opacity:.2}}
+.tg{width:68px;height:36px;border-radius:18px;background:rgba(255,255,255,.12);position:relative;transition:background .3s}
+.tg i{position:absolute;left:4px;top:4px;width:28px;height:28px;border-radius:50%;background:#9aa3b2;transition:.3s cubic-bezier(.3,1.4,.5,1)}
+.pnl.on .tg{background:var(--green)}
+.pnl.on .tg i{left:36px;background:#fff}
+.ckk{font-size:20px;padding:9px 20px}
+.ckk .ic{color:var(--green);stroke-width:2.6}
+.bub{padding:12px 18px;border-radius:18px 18px 18px 4px;font-size:20px;font-weight:700;background:rgba(94,177,255,.16);border:1px solid rgba(94,177,255,.55);
+  color:#d6ebff;opacity:0;transform:scale(.5);transform-origin:left bottom;transition:.45s cubic-bezier(.3,1.5,.5,1);white-space:nowrap;display:flex;gap:10px;align-items:center}
+.bub.in{opacity:1;transform:none}
+.bub .mi{display:none;color:var(--dim)}
+.bub.mute{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.15)}
+.bub.mute .tx{text-decoration:line-through;text-decoration-color:var(--red);color:var(--dim2)}
+.bub.mute .mi{display:inline-flex;align-items:center;gap:6px;color:var(--green);font-size:18px}
+
+/* ── 07 闭环 ── */
+.trk2 circle{fill:none;stroke:rgba(255,255,255,.14);stroke-width:2}
+.trk2 .dsh{fill:none;stroke:rgba(255,138,107,.5);stroke-width:2;stroke-dasharray:2 14;animation:dash 1.2s linear infinite;opacity:0;transition:opacity .6s}
+.trk2.in .dsh{opacity:1}
+.nd{width:96px;height:96px;border-radius:50%!important;display:grid;place-items:center;color:#cfd6e0}
+.nd .ic{width:38px;height:38px}
+.nd.hit{animation:hitn .8s}
+@keyframes hitn{30%{transform:scale(1.18);box-shadow:0 0 50px rgba(255,138,107,.6);border-color:var(--egg2)}}
+.nd.n4{color:var(--amber);border-color:rgba(255,181,71,.5)}
+.nd.n4.wait{animation:breathe 1.1s infinite}
+.nd.n4.ok{border-color:var(--green);color:var(--green)}
+.nd.n5{color:var(--blue);border-color:rgba(94,177,255,.5)}
+.nl{font-size:23px;font-weight:800;white-space:nowrap}
+.nl small{display:block;font-size:16px;color:var(--dim);font-weight:400;margin-top:2px}
+.orb{position:absolute;left:-40px;top:-40px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 0 22px 8px rgba(255,90,90,.75);z-index:6;opacity:0}
+
+/* ── 08 打包 ── */
+.it{width:360px;height:76px;display:flex;align-items:center;gap:14px;padding:0 20px}
+.it .ic{color:var(--dim)}
+.it .fn{font:700 19px var(--mono)}
+.it.R .fn{font-family:var(--sans);font-size:21px}
+.it .fd{font-size:15.5px;color:var(--dim)}
+.it .okm{margin-left:auto;color:var(--green);opacity:0;transform:scale(.3);transition:.35s cubic-bezier(.3,1.6,.5,1);stroke-width:2.6}
+.it.got{border-color:rgba(61,220,151,.5)}
+.it.got .okm{opacity:1;transform:none}
+.gh{position:absolute;inset:0;border-radius:18px;border:1px solid rgba(255,255,255,.5);background:rgba(255,255,255,.1);opacity:0;pointer-events:none}
+.it.L.go .gh{animation:flyin 1s cubic-bezier(.5,0,.7,1) forwards}
+.it.R.go .gh{animation:flyback 1.1s ease-in-out forwards}
+@keyframes flyin{0%{opacity:1;transform:none}100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(.22)}}
+@keyframes flyback{0%{opacity:1;transform:none}45%{opacity:1;transform:translate(calc(var(--dx)*.72),calc(var(--dy)*.72)) scale(.5)}
+  58%{transform:translate(calc(var(--dx)*.66),calc(var(--dy)*.66)) scale(.5) rotate(10deg)}100%{opacity:0;transform:none}}
+.it.deny{border-color:rgba(255,92,108,.5)}
+.it.deny .fn{text-decoration:line-through;text-decoration-color:var(--red);color:var(--dim)}
+.stp{position:absolute;right:18px;top:50%;border:2.5px solid var(--red);color:var(--red);font-weight:900;font-size:19px;padding:1px 10px;border-radius:8px;
+  transform:translateY(-50%) rotate(-10deg) scale(2);opacity:0;transition:.3s cubic-bezier(.3,1.5,.5,1)}
+.it.deny .stp{opacity:1;transform:translateY(-50%) rotate(-10deg)}
+.box.gulp{animation:gulp .45s}
+@keyframes gulp{40%{transform:scale(1.07)}}
+.sideh{font:700 14px var(--mono);letter-spacing:.16em}
+.rbs{display:flex;justify-content:center;align-items:center;gap:12px}
+.rb{font-size:19px;padding:10px 18px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.04);opacity:0;transform:translateY(10px);transition:.45s;white-space:nowrap}
+.rb.opt{border-style:dashed;color:var(--dim)}
+.rb.in{opacity:1;transform:none}
+.rb.hl{border-color:var(--blue);color:#d6ebff;background:rgba(94,177,255,.12);animation:pulseB 1.2s infinite}
+.rba{color:var(--dim2);font-family:var(--mono);opacity:0;transition:.4s}
+.rba.in{opacity:1}
+
+/* ── 09 结尾 ── */
+.tile{width:330px;height:320px;padding:34px 28px}
+.tile .ti{width:76px;height:76px;border-radius:22px;display:grid;place-items:center;background:color-mix(in srgb,var(--tc) 16%,transparent);color:var(--tc);
+  box-shadow:0 0 40px color-mix(in srgb,var(--tc) 25%,transparent)}
+.tile .ti .ic{width:38px;height:38px;stroke-width:2}
+.tile h3{font-size:31px;font-weight:800;margin:30px 0 12px}
+.tile p{font-size:19px;color:var(--dim);margin:0;line-height:1.55}
+.tile .no{position:absolute;right:26px;top:26px;font:800 15px var(--mono);color:var(--dim2)}
+.endr{display:flex;justify-content:center;align-items:center;gap:20px}
+.endr .nm{font-size:30px;font-weight:800}
+.endr .nm small{display:block;font-size:17px;color:var(--dim);font-weight:400}
+.replay{font:700 18px var(--sans);color:var(--ink);background:rgba(255,75,85,.16);border:1px solid rgba(255,75,85,.55);border-radius:999px;padding:12px 26px;cursor:pointer;margin-left:20px}
+.replay:hover{background:rgba(255,75,85,.3)}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <radialGradient id="eggG" cx="36%" cy="32%" r="75%">
+      <stop offset="0" stop-color="#FFA08A"/><stop offset=".45" stop-color="#F23A4C"/><stop offset="1" stop-color="#8E0F25"/>
+    </radialGradient>
+  </defs>
+  <symbol id="egg" viewBox="-70 -85 140 160">
+    <path d="M0,-78 C22,-46 52,-14 52,18 A52,52 0 0 1 -52,18 C-52,-14 -22,-46 0,-78 Z" fill="url(#eggG)"/>
+    <path d="M-31,-8 C-27,-28 -15,-45 -7,-55" stroke="rgba(255,255,255,.55)" stroke-width="6" stroke-linecap="round" fill="none"/>
+    <rect x="-46" y="3" width="92" height="9" rx="4.5" fill="#22262E"/>
+    <circle cx="-17" cy="8" r="14" fill="#0E1116" stroke="#C9D2DE" stroke-width="3.5"/>
+    <circle cx="17" cy="8" r="14" fill="#0E1116" stroke="#C9D2DE" stroke-width="3.5"/>
+    <circle cx="-13" cy="5" r="4.5" fill="#fff"/><circle cx="21" cy="5" r="4.5" fill="#fff"/>
+    <path d="M-10,36 Q0,44 10,36" stroke="#5a0d14" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-mute" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/><path d="M3.5 3.5l17 17"/></symbol>
+  <symbol id="i-q" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.5v.6"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6.5 3h7.5l4 4v14h-11.5z"/><path d="M14 3v4h4"/><path d="M9.3 14.2l2 2 3.6-4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6.5 3h7.5l4 4v14h-11.5z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16.5h4"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9.5L5 20v-4H4z"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/></symbol>
+  <symbol id="i-window" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/></symbol>
+  <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M3 2l7.5 19 2.6-7.9L21 10.5z" fill="#fff" stroke="#111" stroke-width="1.3"/></symbol>
+</svg>
+
+<div id="stage">
+<div id="prog"><i></i></div>
+
+<!-- ═════ 00 片头 ═════ -->
+<section class="scene" id="s0">
+  <div class="a glowb" style="left:540px;top:80px"></div>
+  <div class="a rings" style="left:800px;top:330px"><i></i><i></i><i></i></div>
+  <div class="a drop" style="left:690px;top:190px"><svg class="bob" width="220" height="251"><use href="#egg" width="220" height="251"/></svg></div>
+  <h1 class="a rise t-title" style="left:0;width:1600px;top:488px">dr eggbot</h1>
+  <p class="a rise t-sub" style="left:0;width:1600px;top:636px">一个专门造 Bot 的 Bot</p>
+  <div class="a row-c" style="left:0;width:1600px;top:708px">
+    <span class="pill pop p1"><b>1</b>道门</span>
+    <span class="pill pop p2"><b>3</b>条流水线</span>
+    <span class="pill pop p3"><b>2</b>个闹钟 · 默认关</span>
+    <span class="pill pop p4"><b>1</b>个拍板的人：你</span>
+  </div>
+</section>
+
+<!-- ═════ 01 门卫 ═════ -->
+<section class="scene" id="s1">
+  <div class="hd"><div class="eb">01 · 角色定义</div><h2>先判断：这活该不该接</h2></div>
+  <div class="a gate" style="left:700px;top:280px;width:400px;height:400px">
+    <svg width="400" height="400">
+      <circle cx="200" cy="200" r="150" class="core"/>
+      <path class="arc k1" d="M30.65,185.18 A170,170 0 0 1 185.18,30.65"/>
+      <path class="arc k2" d="M214.82,30.65 A170,170 0 0 1 369.35,185.18"/>
+      <path class="arc k3" d="M369.35,214.82 A170,170 0 0 1 214.82,369.35"/>
+      <path class="arc k4" d="M185.18,369.35 A170,170 0 0 1 30.65,214.82"/>
+    </svg>
+    <svg class="a bob" style="left:130px;top:118px" width="140" height="160"><use href="#egg" width="140" height="160"/></svg>
+  </div>
+  <div class="a lab k1" style="left:420px;top:262px;width:300px;text-align:right"><div class="lt">一项职责</div><div class="ls">只设计 Bot</div></div>
+  <div class="a lab k2" style="left:1080px;top:262px;width:320px"><div class="lt">不做的事</div><div class="ls">不默认做模板 · 不越位</div></div>
+  <div class="a lab k3" style="left:1080px;top:632px;width:320px"><div class="lt">何时工作</div><div class="ls">职责一清楚就动手</div></div>
+  <div class="a lab k4" style="left:420px;top:632px;width:300px;text-align:right"><div class="lt">语气</div><div class="ls">短句 · 随意 · 有点疯</div></div>
+
+  <div class="a card req r1" style="left:100px;top:451px"><svg class="ic"><use href="#i-chat"/></svg>帮我做一个周报 Bot</div>
+  <div class="a card req r2" style="left:100px;top:451px"><svg class="ic"><use href="#i-chat"/></svg>顺便帮我把帖子发了</div>
+  <div class="a card req r3" style="left:100px;top:451px"><svg class="ic"><use href="#i-chat"/></svg>做完直接发布成模板</div>
+  <div class="a card req r4" style="left:100px;top:451px"><svg class="ic"><use href="#i-chat"/></svg>把写作 Bot 收紧一点</div>
+
+  <div class="a card dest" style="left:1250px;top:440px;width:280px;height:80px"><svg class="ic"><use href="#i-gear"/></svg>进入「设计 Bot」</div>
+  <div class="a why w1" style="left:400px;top:722px;width:1000px">✕ 相邻的活不接：它只造 Bot，不替你发帖</div>
+  <div class="a why w2" style="left:400px;top:722px;width:1000px">✕ 不默认做成公开模板</div>
+</section>
+
+<!-- ═════ 02 总图 ═════ -->
+<section class="scene" id="s2">
+  <div class="hd"><div class="eb">02 · 分工总图</div><h2>一道门 · 三条流水线 · 你拍板</h2></div>
+  <svg class="a" style="left:0;top:0" width="1600" height="900">
+    <g class="lines draw">
+      <path pathLength="1" d="M205,520 C265,520 265,360 330,360"/>
+      <path pathLength="1" d="M205,520 L330,520"/>
+      <path pathLength="1" d="M205,520 C265,520 265,680 330,680"/>
+      <path pathLength="1" d="M530,360 L1460,360"/>
+      <path pathLength="1" d="M530,520 L1460,520"/>
+      <path pathLength="1" d="M530,680 L1460,680"/>
+    </g>
+    <g class="flow">
+      <path d="M530,360 L1460,360" stroke="#FF8A6B"/>
+      <path d="M530,520 L1460,520" stroke="#4FD1C5"/>
+      <path d="M530,680 L1460,680" stroke="#A78BFA"/>
+    </g>
+  </svg>
+  <div class="a pop g-egg" style="left:95px;top:455px"><svg class="bob" width="110" height="126"><use href="#egg" width="110" height="126"/></svg></div>
+  <div class="a fade g-egg" style="left:50px;top:590px;width:200px;text-align:center;font-size:20px;font-weight:800">角色定义<div style="font:13px var(--mono);color:var(--dim);font-weight:400">门卫</div></div>
+
+  <div class="a card ln pop ll1" style="left:330px;top:318px;--lc:#FF8A6B"><div class="t">设计 Bot</div><div class="e">Design a Grok Bot</div><div class="g">按需 · 你开口就干</div></div>
+  <div class="a card ln pop ll2" style="left:330px;top:478px;--lc:#4FD1C5"><div class="t">对话巡检</div><div class="e">Transcript healthcheck</div><div class="g">工作日 8:44 · 默认关</div></div>
+  <div class="a card ln pop ll3" style="left:330px;top:638px;--lc:#A78BFA"><div class="t">定时任务巡检</div><div class="e">Routine healthcheck</div><div class="g">每周一 8:49 · 默认关</div></div>
+
+  <div class="a colh fade c1" style="left:560px;top:262px"><b>①</b>叫醒</div>
+  <div class="a colh fade c2" style="left:740px;top:262px"><b>②</b>先问 / 先查</div>
+  <div class="a colh fade c3" style="left:920px;top:262px"><b>③</b>动手</div>
+  <div class="a colh fade c4 ev" style="left:1100px;top:262px"><b>④</b>拿证据</div>
+  <div class="a colh fade c5 wt" style="left:1280px;top:262px"><b>⑤</b>停下等你</div>
+
+  <!-- stations: x 635/815/995/1175/1355 -->
+  <div class="a st pop c1" style="left:602px;top:327px"><svg class="ic"><use href="#i-chat"/></svg></div>
+  <div class="a st pop c2" style="left:782px;top:327px"><svg class="ic"><use href="#i-q"/></svg></div>
+  <div class="a st pop c3" style="left:962px;top:327px"><svg class="ic"><use href="#i-gear"/></svg></div>
+  <div class="a st ev pop c4" style="left:1142px;top:327px"><svg class="ic"><use href="#i-doc"/></svg></div>
+  <div class="a st wt pop c5" style="left:1322px;top:327px"><svg class="ic"><use href="#i-user"/></svg></div>
+
+  <div class="a st pop c1" style="left:602px;top:487px"><svg class="ic"><use href="#i-bell"/></svg></div>
+  <div class="a st pop c2" style="left:782px;top:487px"><svg class="ic"><use href="#i-window"/></svg></div>
+  <div class="a st pop c3" style="left:962px;top:487px"><svg class="ic"><use href="#i-scan"/></svg></div>
+  <div class="a st ev pop c4" style="left:1142px;top:487px"><svg class="ic"><use href="#i-doc"/></svg></div>
+  <div class="a st wt pop c5" style="left:1322px;top:487px"><svg class="ic"><use href="#i-user"/></svg></div>
+
+  <div class="a st pop c1" style="left:602px;top:647px"><svg class="ic"><use href="#i-bell"/></svg></div>
+  <div class="a st pop c2" style="left:782px;top:647px"><svg class="ic"><use href="#i-clock"/></svg></div>
+  <div class="a st pop c3" style="left:962px;top:647px"><svg class="ic"><use href="#i-scan"/></svg></div>
+  <div class="a st ev pop c4" style="left:1142px;top:647px"><svg class="ic"><use href="#i-doc"/></svg></div>
+  <div class="a st wt pop c5" style="left:1322px;top:647px"><svg class="ic"><use href="#i-user"/></svg></div>
+
+  <div class="a trk" style="left:0;top:351px;--lc:#FF8A6B"><div class="tok"></div></div>
+  <div class="a trk" style="left:0;top:511px;--lc:#4FD1C5"><div class="tok" style="animation-delay:2.3s"></div></div>
+  <div class="a trk" style="left:0;top:671px;--lc:#A78BFA"><div class="tok" style="animation-delay:4.6s"></div></div>
+
+  <div class="a human pop" style="left:1462px;top:300px;width:88px;height:440px"><svg class="ic"><use href="#i-user"/></svg>你<span class="vt">最后拍板</span></div>
+</section>
+
+<!-- ═════ 03 设计 Bot ═════ -->
+<section class="scene" id="s3">
+  <div class="hd"><div class="eb">03 · 流水线一：设计 Bot</div><h2>少问一点，建完读回来才算完</h2></div>
+  <div class="a card q pop q1" style="left:70px;top:208px"><svg class="ic"><use href="#i-q"/></svg><span class="qt">这个 Bot 只干哪件事？</span><span class="qs"><svg class="ic okk"><use href="#i-check"/></svg></span></div>
+  <div class="a card q pop q2" style="left:70px;top:290px"><svg class="ic"><use href="#i-q"/></svg><span class="qt">什么语气？叫什么名字？</span><span class="qs"><svg class="ic okk"><use href="#i-check"/></svg></span></div>
+  <div class="a card q pop q3" style="left:70px;top:372px"><svg class="ic"><use href="#i-q"/></svg><span class="qt">随叫随到，还是定时干活？</span><span class="qs"><svg class="ic okk"><use href="#i-check"/></svg></span></div>
+  <div class="a card q pop q4" style="left:70px;top:454px"><svg class="ic"><use href="#i-q"/></svg><span class="qt">它主要跟谁说话？</span><span class="qs"><svg class="ic okk"><use href="#i-check"/></svg></span></div>
+  <div class="a card q pop q5" style="left:70px;top:536px"><svg class="ic"><use href="#i-q"/></svg><span class="qt">用哪个模型、配哪些工具？</span><span class="qs"><span class="skt">照同类来</span></span></div>
+  <div class="a card q pop q6" style="left:70px;top:618px"><svg class="ic"><use href="#i-q"/></svg><span class="qt">要不要现在就创建？</span><span class="qs"><span class="skt">直接建</span></span></div>
+
+  <svg class="a arrw fade" style="left:585px;top:430px" width="90" height="40"><path d="M4,20 L78,20"/><path d="M68,10 L80,20 L68,30" style="stroke-dasharray:none;animation:none"/></svg>
+
+  <div class="a card prof pop" style="left:690px;top:200px;width:500px;height:500px">
+    <div class="ph"><div class="av">周</div><div><div class="pn">周报 Bot</div><div class="pm">profile · 示例</div></div></div>
+    <div class="pr r1"><div class="pk">一项职责</div><div class="pv type">每周五把本周进展汇总成一页</div><svg class="ic ck"><use href="#i-check"/></svg></div>
+    <div class="pr r2"><div class="pk">不做的事</div><div class="pv type">不替你发出去 · 不改原始数据</div><svg class="ic ck"><use href="#i-check"/></svg></div>
+    <div class="pr r3"><div class="pk">语气</div><div class="pv type">短句，要点式</div><svg class="ic ck"><use href="#i-check"/></svg></div>
+    <div class="pr r4"><div class="pk">何时工作</div><div class="pv type">周五 17:00 · 没进展就不说话</div><svg class="ic ck"><use href="#i-check"/></svg></div>
+    <div class="beam"></div>
+    <div class="stamp">回读通过</div>
+  </div>
+
+  <div class="a toast" style="left:1240px;top:212px"><svg class="ic"><use href="#i-check"/></svg>创建成功<i class="strike"></i></div>
+  <div class="a rise ne" style="left:1240px;top:290px">≠ 做完了</div>
+  <div class="a card out pop" style="left:1240px;top:400px;width:300px"><div class="o1">报给你</div><b>周报 Bot</b>每周五把本周进展汇总成一页</div>
+  <div class="a rise nx nx1" style="left:1244px;top:574px"><svg class="ic"><use href="#i-x"/></svg>不发布成模板</div>
+  <div class="a rise nx nx2" style="left:1244px;top:620px"><svg class="ic"><use href="#i-x"/></svg>不顺手改别的</div>
+</section>
+
+<!-- ═════ 04 对话巡检 ═════ -->
+<section class="scene" id="s4">
+  <div class="hd"><div class="eb">04 · 流水线二：对话巡检</div><h2>只拿原话说事，找出卡住的地方</h2></div>
+  <div class="a" style="left:80px;top:190px;display:flex;gap:12px">
+    <span class="pill ch pop ch1"><svg class="ic"><use href="#i-window"/></svg>窗口：最近 24 小时</span>
+    <span class="pill ch pop ch2"><svg class="ic"><use href="#i-chat"/></svg>3 个 Bot 有对话</span>
+    <span class="pill ch pop ch3"><svg class="ic"><use href="#i-lock"/></svg>只看获准的记录</span>
+  </div>
+  <div class="a win" style="left:240px;top:278px;width:780px;height:388px"></div>
+  <div class="rows fade">
+    <div class="a rl" style="left:80px;top:312px"><div class="t">写作 Bot</div><div class="s">示例</div></div>
+    <div class="a rl" style="left:80px;top:432px"><div class="t">客服 Bot</div><div class="s">示例</div></div>
+    <div class="a rl" style="left:80px;top:552px"><div class="t">日程 Bot</div><div class="s">示例</div></div>
+    <div class="a trkl" style="left:250px;top:330px;width:750px"></div>
+    <div class="a trkl" style="left:250px;top:450px;width:750px"></div>
+    <div class="a trkl" style="left:250px;top:570px;width:750px"></div>
+    <!-- row 1 -->
+    <div class="a bb u" style="left:270px;top:317px;width:44px"></div><div class="a bb" style="left:322px;top:317px;width:30px"></div>
+    <div class="a bb u fg f1" style="left:370px;top:317px;width:48px"></div><div class="a bb" style="left:428px;top:317px;width:36px"></div>
+    <div class="a bb u" style="left:560px;top:317px;width:40px"></div><div class="a bb" style="left:608px;top:317px;width:56px"></div>
+    <div class="a bb u fg f4" style="left:918px;top:317px;width:40px"></div><div class="a gone" style="left:964px;top:314px">···</div>
+    <!-- row 2 -->
+    <div class="a bb u" style="left:300px;top:437px;width:36px"></div><div class="a bb" style="left:344px;top:437px;width:60px"></div>
+    <div class="a bb" style="left:520px;top:437px;width:44px"></div>
+    <div class="a bb u fg f2" style="left:620px;top:437px;width:52px"></div><div class="a bb" style="left:680px;top:437px;width:40px"></div>
+    <div class="a bb u" style="left:780px;top:437px;width:36px"></div><div class="a bb" style="left:824px;top:437px;width:30px"></div>
+    <!-- row 3 -->
+    <div class="a bb u" style="left:280px;top:557px;width:40px"></div><div class="a bb" style="left:328px;top:557px;width:44px"></div>
+    <div class="a bb u" style="left:470px;top:557px;width:30px"></div><div class="a bb" style="left:508px;top:557px;width:50px"></div>
+    <div class="a bb u fg f3" style="left:800px;top:557px;width:48px"></div><div class="a bb" style="left:856px;top:557px;width:34px"></div>
+    <div class="a axis" style="left:250px;top:630px">24 小时前</div>
+    <div class="a axis" style="left:960px;top:630px">现在</div>
+  </div>
+  <div class="a scanner" style="left:250px;top:292px"></div>
+  <div class="a co f1" style="left:350px;top:258px"><span class="tag">反复纠正</span>“又说一遍：别用感叹号”</div>
+  <div class="a co f4" style="right:630px;top:258px"><span class="tag">问题没人接</span>用户问完就走了，没人回</div>
+  <div class="a co f2" style="left:600px;top:378px"><span class="tag">理解跑偏</span>“我要的是退款，不是换货”</div>
+  <div class="a co f3" style="right:740px;top:498px"><span class="tag">交接断了</span>“材料是我从写作 Bot 复制过来的”</div>
+
+  <div class="a card pan pop" style="left:1080px;top:190px;width:460px">
+    <div class="ph2">建议 · 最多 5 条 · 每条附原话</div>
+    <div class="sg sg1"><span class="ty sk">skill</span><div class="tt">写作技能加一条：不用感叹号</div><div class="qq">“又说一遍：别用感叹号”</div></div>
+    <div class="sg sg2"><span class="ty bt">bot</span><div class="tt">退款交给专门的售后 Bot</div><div class="qq">“我要的是退款，不是换货”</div></div>
+    <div class="sg sg3"><span class="ty rt">routine</span><div class="tt">傍晚查一遍没回复的对话</div><div class="qq">用户问完就走了，没人回</div></div>
+    <div class="waitbar"><svg class="ic"><use href="#i-user"/></svg>等你点名，才去落实</div>
+  </div>
+
+  <div class="a card quiet pop" style="left:80px;top:690px">
+    <span class="lbq">没发现时</span>
+    <span class="qi"><svg class="ic qb"><use href="#i-bell"/></svg><svg class="ic qm"><use href="#i-mute"/></svg></span>
+    <span class="msg">“今天没有变化”</span>
+    <span class="res">→ 不发</span>
+  </div>
+  <div class="cur"><svg width="34" height="34"><use href="#i-cursor" width="34" height="34"/></svg><i class="rip"></i></div>
+</section>
+
+<!-- ═════ 05 定时任务巡检 ═════ -->
+<section class="scene" id="s5">
+  <div class="hd"><div class="eb">05 · 流水线三：定时任务巡检</div><h2>揪出空转和噪音，只建议，不动手</h2></div>
+
+  <div class="a card tk pop k1" style="left:80px;top:200px">
+    <svg class="mclk" width="70" height="70"><circle cx="35" cy="35" r="30"/><line class="hand" x1="35" y1="35" x2="35" y2="13" style="--sp:.7s"/></svg>
+    <div class="tn">查新邮件</div><div class="ts">每 15 分钟一次</div>
+    <div class="lockb"><svg class="ic"><use href="#i-lock"/></svg>只建议</div>
+    <div class="tst"><span class="fl">太频繁</span><span class="fl2">已按你说的改</span><span class="fx">→ 来邮件再叫醒</span></div>
+  </div>
+  <div class="a card tk pop k2" style="left:575px;top:200px">
+    <svg class="mclk" width="70" height="70"><circle cx="35" cy="35" r="30"/><line class="hand" x1="35" y1="35" x2="35" y2="13" style="--sp:14s"/></svg>
+    <div class="tn">每日日报</div><div class="ts">每天 9:00 · 无事不发</div>
+    <div class="lockb"><svg class="ic"><use href="#i-lock"/></svg>只建议</div>
+    <div class="tst"><span class="fl g">正常</span><span class="fx">→ 保持不动</span></div>
+  </div>
+  <div class="a card tk pop k3" style="left:1070px;top:200px">
+    <svg class="mclk" width="70" height="70"><circle cx="35" cy="35" r="30"/><line class="hand" x1="35" y1="35" x2="35" y2="13" style="--sp:3s"/></svg>
+    <div class="tn">库存播报</div><div class="ts">每小时一次</div>
+    <div class="nb">“没有变化”</div>
+    <div class="lockb"><svg class="ic"><use href="#i-lock"/></svg>只建议</div>
+    <div class="tst"><span class="fl">空跑还说话</span><span class="fx">→ 加上「无事不发」</span></div>
+  </div>
+  <div class="a card tk pop k4" style="left:80px;top:420px">
+    <svg class="mclk" width="70" height="70"><circle cx="35" cy="35" r="30"/><line class="hand" x1="35" y1="35" x2="35" y2="13" style="--sp:5s"/></svg>
+    <div class="tn">订单检查 ×2</div><div class="ts">两个任务查同一件事</div>
+    <div class="lockb"><svg class="ic"><use href="#i-lock"/></svg>只建议</div>
+    <div class="tst"><span class="fl">重复</span><span class="fx">→ 合并成一个</span></div>
+  </div>
+  <div class="a card tk pop k5 dead" style="left:575px;top:420px">
+    <svg class="mclk" width="70" height="70"><circle cx="35" cy="35" r="30"/><line class="hand still" x1="35" y1="35" x2="35" y2="13"/></svg>
+    <div class="tn">双 11 提醒</div><div class="ts">活动早就结束了</div>
+    <div class="lockb"><svg class="ic"><use href="#i-lock"/></svg>只建议</div>
+    <div class="tst"><span class="fl">已失效</span><span class="fx">→ 停掉</span></div>
+  </div>
+  <div class="a card tk pop k6" style="left:1070px;top:420px">
+    <svg class="mclk" width="70" height="70"><circle cx="35" cy="35" r="30"/><line class="hand" x1="35" y1="35" x2="35" y2="13" style="--sp:9s"/></svg>
+    <div class="tn">竞品周报</div><div class="ts">三个月没人看过</div>
+    <div class="lockb"><svg class="ic"><use href="#i-lock"/></svg>只建议</div>
+    <div class="tst"><span class="fl">没人理</span><span class="fx">→ 先暂停</span></div>
+  </div>
+
+  <div class="a card rib pop" style="left:80px;top:640px;width:1440px;height:112px">
+    <div class="rh"><b>建议清单</b><span>问题大的排前面</span></div>
+    <div class="rp rp1"><i>1</i>太频繁 → 改成事件触发</div>
+    <div class="rp rp2"><i>2</i>空跑还说话 → 无事不发</div>
+    <div class="rp rp3"><i>3</i>重复 → 合并</div>
+    <div class="rp rp4"><i>4</i>失效 → 停掉</div>
+    <div class="rp rp5"><i>5</i>没人理 → 先暂停</div>
+  </div>
+  <div class="cur"><svg width="34" height="34"><use href="#i-cursor" width="34" height="34"/></svg><i class="rip"></i></div>
+</section>
+
+<!-- ═════ 06 闹钟 ═════ -->
+<section class="scene" id="s6">
+  <div class="hd"><div class="eb">06 · 定时任务</div><h2>两个闹钟，默认关着</h2></div>
+  <div class="a card pnl pop pn1" style="left:170px;top:200px">
+    <svg class="clk" width="240" height="240">
+      <circle cx="120" cy="120" r="112" class="face"/><g class="tks"></g>
+      <line class="hh" x1="120" y1="120" x2="120" y2="64" transform="rotate(262 120 120)"/>
+      <line class="mh" x1="120" y1="120" x2="120" y2="36" transform="rotate(264 120 120)"/>
+      <line class="sec" x1="120" y1="134" x2="120" y2="28"/>
+      <circle cx="120" cy="120" r="6" class="hub"/>
+      <text x="120" y="178" class="dg">8:44</text>
+    </svg>
+    <div class="pt">对话巡检<small>transcript-healthcheck</small></div>
+    <div class="pd"><span class="d">一</span><span class="d">二</span><span class="d">三</span><span class="d">四</span><span class="d">五</span><span>六</span><span>日</span></div>
+    <div class="prw"><span>enabled:</span><span class="v0">false</span><span class="v1">true</span><span class="tg"><i></i></span></div>
+  </div>
+  <div class="a card pnl pop pn2" style="left:850px;top:200px">
+    <svg class="clk" width="240" height="240">
+      <circle cx="120" cy="120" r="112" class="face"/><g class="tks"></g>
+      <line class="hh" x1="120" y1="120" x2="120" y2="64" transform="rotate(264.5 120 120)"/>
+      <line class="mh" x1="120" y1="120" x2="120" y2="36" transform="rotate(294 120 120)"/>
+      <line class="sec" x1="120" y1="134" x2="120" y2="28"/>
+      <circle cx="120" cy="120" r="6" class="hub"/>
+      <text x="120" y="178" class="dg">8:49</text>
+    </svg>
+    <div class="pt">定时任务巡检<small>routine-healthcheck</small></div>
+    <div class="pd"><span class="d">一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+    <div class="prw"><span>enabled:</span><span class="v0">false</span><span class="v1">true</span><span class="tg"><i></i></span></div>
+  </div>
+  <div class="a" style="left:0;width:1600px;top:696px;display:flex;justify-content:center;gap:16px">
+    <span class="pill ckk pop ck1"><svg class="ic"><use href="#i-check"/></svg>按你的本地时区</span>
+    <span class="pill ckk pop ck2"><svg class="ic"><use href="#i-check"/></svg>你同意开启</span>
+  </div>
+  <div class="a bub b1" style="left:560px;top:214px"><span class="tx">发现 2 条建议</span></div>
+  <div class="a bub b2" style="left:1240px;top:214px"><span class="tx">“没有可建议的”</span><span class="mi"><svg class="ic"><use href="#i-mute"/></svg>不发</span></div>
+  <div class="cur"><svg width="34" height="34"><use href="#i-cursor" width="34" height="34"/></svg><i class="rip"></i></div>
+</section>
+
+<!-- ═════ 07 闭环 ═════ -->
+<section class="scene" id="s7">
+  <div class="hd"><div class="eb">07 · 三条线怎么接上</div><h2>巡检找问题，你点头，设计线补上</h2></div>
+  <svg class="a trk2 draw" style="left:0;top:0" width="1600" height="900">
+    <circle pathLength="1" cx="800" cy="480" r="240" transform="rotate(-90 800 480)"/>
+    <circle class="dsh" cx="800" cy="480" r="240" style="stroke-dasharray:2 14"/>
+  </svg>
+  <div class="a pop cegg" style="left:728px;top:398px"><svg class="bob" width="144" height="165"><use href="#egg" width="144" height="165"/></svg></div>
+  <div class="a card nd pop n1" style="left:752px;top:192px"><svg class="ic"><use href="#i-bell"/></svg></div>
+  <div class="a card nd pop n2" style="left:980px;top:358px"><svg class="ic"><use href="#i-scan"/></svg></div>
+  <div class="a card nd pop n3" style="left:893px;top:626px"><svg class="ic"><use href="#i-doc"/></svg></div>
+  <div class="a card nd pop n4" style="left:611px;top:626px"><svg class="ic"><use href="#i-user"/></svg></div>
+  <div class="a card nd pop n5" style="left:524px;top:358px"><svg class="ic"><use href="#i-gear"/></svg></div>
+  <div class="a nl fade n1" style="left:868px;top:206px">巡检叫醒<small>闹钟响，或你开口</small></div>
+  <div class="a nl fade n2" style="left:1096px;top:372px">发现问题<small>附上原话</small></div>
+  <div class="a nl fade n3" style="left:1008px;top:640px">写成建议<small>标明 skill · bot · routine</small></div>
+  <div class="a nl fade n4" style="right:1004px;top:640px;text-align:right">你点名<small>不点就不动</small></div>
+  <div class="a nl fade n5" style="right:1092px;top:372px;text-align:right">设计 Bot · 回读<small>造出来，读回来核对</small></div>
+  <div class="orb"></div>
+  <div class="cur"><svg width="34" height="34"><use href="#i-cursor" width="34" height="34"/></svg><i class="rip"></i></div>
+</section>
+
+<!-- ═════ 08 打包 ═════ -->
+<section class="scene" id="s8">
+  <div class="hd"><div class="eb">08 · 拿去复建</div><h2>包里是零件，不是装好的 Bot</h2></div>
+  <div class="a sideh fade sh1" style="left:92px;top:196px;color:var(--green)">带走 ✓</div>
+  <div class="a sideh fade sh2" style="left:1152px;top:196px;color:var(--red)">故意不带 ✕</div>
+
+  <div class="a card it L pop l1" style="left:90px;top:228px;--dx:530px;--dy:194px"><svg class="ic"><use href="#i-file"/></svg><div><div class="fn">profile.json</div><div class="fd">角色定义</div></div><svg class="ic okm"><use href="#i-check"/></svg><span class="gh"></span></div>
+  <div class="a card it L pop l2" style="left:90px;top:328px;--dx:530px;--dy:94px"><svg class="ic"><use href="#i-file"/></svg><div><div class="fn">SKILL.md ×3</div><div class="fd">三条流水线</div></div><svg class="ic okm"><use href="#i-check"/></svg><span class="gh"></span></div>
+  <div class="a card it L pop l3" style="left:90px;top:428px;--dx:530px;--dy:-6px"><svg class="ic"><use href="#i-clock"/></svg><div><div class="fn">routines ×2</div><div class="fd">闹钟规格 · 默认关</div></div><svg class="ic okm"><use href="#i-check"/></svg><span class="gh"></span></div>
+  <div class="a card it L pop l4" style="left:90px;top:528px;--dx:530px;--dy:-106px"><svg class="ic"><use href="#i-gear"/></svg><div><div class="fn">dependencies</div><div class="fd">pstack · 可选，不自动装</div></div><svg class="ic okm"><use href="#i-check"/></svg><span class="gh"></span></div>
+
+  <div class="a card it R pop m1" style="left:1150px;top:228px;--dx:-530px;--dy:194px"><svg class="ic"><use href="#i-user"/></svg><div><div class="fn">私人记忆</div></div><span class="stp">不带</span><span class="gh"></span></div>
+  <div class="a card it R pop m2" style="left:1150px;top:328px;--dx:-530px;--dy:94px"><svg class="ic"><use href="#i-chat"/></svg><div><div class="fn">历史对话</div></div><span class="stp">不带</span><span class="gh"></span></div>
+  <div class="a card it R pop m3" style="left:1150px;top:428px;--dx:-530px;--dy:-6px"><svg class="ic"><use href="#i-gear"/></svg><div><div class="fn">账号与模型设置</div></div><span class="stp">不带</span><span class="gh"></span></div>
+  <div class="a card it R pop m4" style="left:1150px;top:528px;--dx:-530px;--dy:-106px"><svg class="ic"><use href="#i-lock"/></svg><div><div class="fn">凭证</div></div><span class="stp">不带</span><span class="gh"></span></div>
+
+  <div class="a pop box" style="left:660px;top:380px">
+    <svg width="280" height="220" viewBox="0 0 280 220">
+      <path d="M40 80 L140 50 L240 80 L140 110 Z" fill="rgba(0,0,0,.45)" stroke="rgba(255,120,110,.5)" stroke-width="2"/>
+      <path d="M40 80 L8 50 L108 20 L140 50 Z" fill="rgba(255,75,85,.10)" stroke="rgba(255,120,110,.65)" stroke-width="2"/>
+      <path d="M240 80 L272 50 L172 20 L140 50 Z" fill="rgba(255,75,85,.10)" stroke="rgba(255,120,110,.65)" stroke-width="2"/>
+      <path d="M40 80 L140 110 L240 80 L240 180 L140 212 L40 180 Z" fill="rgba(255,75,85,.13)" stroke="rgba(255,120,110,.8)" stroke-width="2"/>
+      <path d="M140 110 L140 212" stroke="rgba(255,120,110,.5)" stroke-width="2"/>
+    </svg>
+  </div>
+  <div class="a fade box" style="left:600px;top:604px;width:400px;text-align:center;font:600 16px var(--mono);color:var(--dim)">dr-eggbot-share.zip</div>
+
+  <div class="a rbs" style="left:0;width:1600px;top:690px">
+    <span class="rb rb1">① 抄角色定义</span><span class="rba rb1">→</span>
+    <span class="rb rb2">② 存三份技能</span><span class="rba rb2">→</span>
+    <span class="rb opt rb3">③ 开闹钟 · 可选</span><span class="rba rb3">→</span>
+    <span class="rb opt rb4">④ 装 pstack · 可选</span><span class="rba rb4">→</span>
+    <span class="rb rb5">⑤ 读回来验收</span>
+  </div>
+</section>
+
+<!-- ═════ 09 结尾 ═════ -->
+<section class="scene" id="s9">
+  <div class="hd"><div class="eb">09 · 带走这四条</div><h2>四条规矩，换个职责照样用</h2></div>
+  <div class="a card tile pop t1" style="left:95px;top:226px;--tc:#FF8A6B"><span class="no">01</span><div class="ti"><svg class="ic"><use href="#i-target"/></svg></div><h3>只做一件事</h3><p>再配一张「不做」清单，相邻的活交给别的 Bot</p></div>
+  <div class="a card tile pop t2" style="left:455px;top:226px;--tc:#5EB1FF"><span class="no">02</span><div class="ti"><svg class="ic"><use href="#i-doc"/></svg></div><h3>读回来才算完</h3><p>「创建成功」的提示不算数，拿证据交差</p></div>
+  <div class="a card tile pop t3" style="left:815px;top:226px;--tc:#3DDC97"><span class="no">03</span><div class="ti"><svg class="ic"><use href="#i-mute"/></svg></div><h3>没事就安静</h3><p>不为了「我工作过了」发一条空消息</p></div>
+  <div class="a card tile pop t4" style="left:1175px;top:226px;--tc:#FFB547"><span class="no">04</span><div class="ti"><svg class="ic"><use href="#i-user"/></svg></div><h3>你点名才动手</h3><p>建议归 Bot，决定归你</p></div>
+  <div class="a endr rise" style="left:0;width:1600px;top:610px">
+    <svg class="bob" width="80" height="92"><use href="#egg" width="80" height="92"/></svg>
+    <div class="nm">dr eggbot<small>一个专门造 Bot 的 Bot</small></div>
+    <button class="replay" onclick="go(0)">↺ 从头再看</button>
+  </div>
+</section>
+
+<div id="cap"></div>
+<div id="bar">
+  <div>DR EGGBOT · 设计逻辑</div>
+  <div class="dots"></div>
+  <div class="btns"><span style="margin-right:8px">← → 切换 · 空格 暂停</span><button id="prev" aria-label="上一幕">‹</button><button id="pp" aria-label="暂停">❚❚</button><button id="next" aria-label="下一幕">›</button></div>
+</div>
+</div>
+
+<script>
+(() => {
+const stage = document.getElementById('stage');
+const scenes = [...document.querySelectorAll('.scene')];
+const capEl = document.getElementById('cap');
+const progEl = document.querySelector('#prog i');
+const ppBtn = document.getElementById('pp');
+let scale = 1;
+
+// 钟面刻度
+document.querySelectorAll('.tks').forEach(g => {
+  for (let i = 0; i < 12; i++) {
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.setAttribute('x1', 120); l.setAttribute('y1', 16); l.setAttribute('x2', 120); l.setAttribute('y2', i % 3 ? 26 : 34);
+    l.setAttribute('transform', `rotate(${i * 30} 120 120)`); g.appendChild(l);
+  }
+});
+const templates = scenes.map(s => s.innerHTML);
+
+function fit() {
+  scale = Math.min(innerWidth / 1600, innerHeight / 900);
+  stage.style.transform = `translate(-50%,-50%) scale(${scale})`;
+}
+addEventListener('resize', fit); fit();
+
+let pendingCap = null;
+function cap(text) {
+  capEl.classList.remove('show');
+  pendingCap = text ? { text, at: t + 0.22 } : null;
+}
+
+const cursorTo = sel => sc => {
+  const c = sc.querySelector('.cur'), el = sc.querySelector(sel);
+  const sr = stage.getBoundingClientRect(), r = el.getBoundingClientRect();
+  c.classList.add('in');
+  c.style.left = (r.left + r.width / 2 - sr.left) / scale + 'px';
+  c.style.top = (r.top + r.height / 2 - sr.top) / scale + 'px';
+};
+const click = sc => { const c = sc.querySelector('.cur'); c.classList.remove('click'); void c.offsetWidth; c.classList.add('click'); };
+const sceneClass = cls => sc => sc.classList.add(cls);
+
+const TL = [
+  { dur: 7.5, steps: [[0.2,'.drop'],[0.4,'.glowb'],[0.6,'.rings'],[1.0,'.t-title'],[1.6,'.t-sub'],[2.4,'.p1'],[2.7,'.p2'],[3.0,'.p3'],[3.3,'.p4']] },
+  { dur: 15.5, steps: [
+    [0.6,'.k1','on'],[1.0,'.k2','on'],[1.4,'.k3','on'],[1.8,'.k4','on'],[0.8,'cap','四件事写进角色定义，它就是门卫'],
+    [2.6,'.r1'],[3.2,'.r1','at'],[3.7,'.r1','pass'],[3.7,'.gate','ok'],[4.3,'.gate','-ok'],[3.6,'cap','对口的活：放行'],[4.9,'.dest','glow'],[5.7,'.dest','-glow'],
+    [5.9,'.r2'],[6.5,'.r2','at'],[7.0,'.r2','rej'],[7.0,'.gate','no'],[7.5,'.gate','-no'],[7.1,'.w1'],[7.0,'cap','相邻的活：挡回去'],[8.8,'.w1','-in'],
+    [9.0,'.r3'],[9.6,'.r3','at'],[10.1,'.r3','rej'],[10.1,'.gate','no'],[10.6,'.gate','-no'],[10.2,'.w2'],[11.8,'.w2','-in'],
+    [12.0,'.r4'],[12.6,'.r4','at'],[13.1,'.r4','pass'],[13.1,'.gate','ok'],[13.7,'.gate','-ok'],[14.3,'.dest','glow'],[13.2,'cap','职责以外的活，一律挡在门外']] },
+  { dur: 14, steps: [
+    [0.4,'.g-egg'],[0.9,'.draw'],[1.3,'.ll1'],[1.6,'.ll2'],[1.9,'.ll3'],
+    [2.4,'.c1'],[2.7,'.c2'],[3.0,'.c3'],[3.3,'.c4'],[3.6,'.c5'],[4.1,'.human'],[4.6,sceneClass('run')],
+    [4.8,'cap','三条流水线，走同样的五步'],
+    [8.0,'.st.c4','hl'],[8.0,'cap','④ 拿到证据，才算交差'],
+    [10.6,'.st.c4','-hl'],[10.6,'.st.c5','hl'],[10.6,'.human','hl'],[10.6,'cap','⑤ 停下来，等你点名']] },
+  { dur: 17, steps: [
+    [0.6,'.q1'],[1.0,'.q2'],[1.4,'.q3'],[1.8,'.q4'],[2.2,'.q5'],[2.6,'.q6'],[0.8,'cap','先问几个偏好'],
+    [3.6,'.q1','ok'],[3.75,'.q2','ok'],[3.9,'.q3','ok'],[4.05,'.q4','ok'],[4.4,'.q5','skip'],[4.6,'.q6','skip'],
+    [4.4,'cap','能照同类做的、已经清楚的，不问'],
+    [5.2,'.arrw'],[5.4,'.prof'],[5.9,'.r1 .type'],[6.5,'.r2 .type'],[7.1,'.r3 .type'],[7.7,'.r4 .type'],[5.8,'cap','四要素写进角色定义，直接建'],
+    [8.6,'.toast'],[8.6,'cap','提示“创建成功”……'],[9.6,'.toast','x'],[9.7,'.ne'],[9.8,'cap','……不算数'],
+    [10.6,'.beam'],[10.6,'cap','读回来，逐项核对'],[11.0,'.pr.r1','ok'],[11.4,'.pr.r2','ok'],[11.8,'.pr.r3','ok'],[12.2,'.pr.r4','ok'],
+    [12.8,'.stamp'],[12.8,'.prof','pass'],
+    [13.6,'.out'],[14.3,'.nx1'],[14.7,'.nx2'],[13.6,'cap','报出名字和一句职责，到此为止']] },
+  { dur: 16.5, steps: [
+    [0.6,'.ch1'],[1.0,'.ch2'],[1.4,'.ch3'],[0.8,'cap','开工先报清：看哪段、看谁、材料从哪来'],
+    [1.6,'.win'],[2.0,'.rows'],[2.6,'.scanner'],[2.8,'cap','逐个 Bot 扫一遍'],
+    [3.27,'.f1','hit'],[5.13,'.f2','hit'],[6.33,'.f3','hit'],[7.13,'.f4','hit'],[7.7,'.scanner','done'],
+    [8.2,'.pan'],[8.6,'.sg1'],[9.3,'.sg2'],[10.0,'.sg3'],[8.4,'cap','每条建议都附上原话'],
+    [11.0,'.waitbar'],[11.0,'cap','你点名了，才去落实'],
+    [12.6,'.quiet'],[13.2,'.quiet','ring'],[14.4,'.quiet','mute'],[13.0,'cap','什么都没发现？那就不发消息']] },
+  { dur: 15.5, steps: [
+    [0.5,'.k1'],[0.75,'.k2'],[1.0,'.k3'],[1.25,'.k4'],[1.5,'.k5'],[1.75,'.k6'],[0.8,'cap','先列清：怎么触发、开没开、一天几次'],
+    [2.6,'.k1','scan'],[3.1,'.k1','hit'],[3.5,'.k2','scan'],[4.0,'.k2','fine'],[4.4,'.k3','scan'],[4.9,'.k3','hit'],
+    [5.3,'.k4','scan'],[5.8,'.k4','hit'],[6.2,'.k5','scan'],[6.7,'.k5','hit'],[7.1,'.k6','scan'],[7.6,'.k6','hit'],
+    [2.8,'cap','逐个检查：谁在空转、谁在吵'],
+    [8.4,'.tk','lock'],[8.4,'cap','只出建议，一个都不碰'],
+    [9.4,'.rib'],[9.8,'.rp1'],[10.05,'.rp2'],[10.3,'.rp3'],[10.55,'.rp4'],[10.8,'.rp5'],
+    [11.6,cursorTo('.rp1')],[11.6,'cap','你点了哪条，才改哪条'],[12.5,click],[12.6,'.rp1','done'],[12.7,'.k1','fixed']] },
+  { dur: 14, steps: [
+    [0.5,'.pn1'],[0.8,'.pn2'],[0.8,'cap','工作日 8:44 查对话 · 每周一 8:49 查定时任务'],
+    [2.6,'.prw','blink'],[2.6,'cap','包里写的是 enabled: false —— 默认关着'],
+    [4.0,'.ck1'],[4.4,'.ck2'],[4.0,'cap','要开？先确认你的时区，再由你同意'],
+    [5.4,cursorTo('.pn1 .tg')],[6.3,click],[6.35,'.pn1','on'],[6.8,cursorTo('.pn2 .tg')],[7.6,click],[7.65,'.pn2','on'],
+    [8.6,'.pn1','ring'],[9.0,'.b1'],[8.8,'cap','有发现：汇报'],
+    [10.4,'.pn2','ring'],[10.8,'.b2'],[11.8,'.b2','mute'],[11.0,'cap','没发现：一个字都不发']] },
+  { dur: 13.5, steps: [
+    [0.4,'.trk2'],[0.6,'.cegg'],[0.8,'.nd.n1'],[1.0,'.nd.n2'],[1.2,'.nd.n3'],[1.4,'.nd.n4'],[1.6,'.nd.n5'],[1.8,'.nl'],
+    [2.8,'.nd.n1','hit'],[3.6,'.nd.n1','-hit'],[3.8,'.nd.n2','hit'],[4.6,'.nd.n2','-hit'],[4.8,'.nd.n3','hit'],[5.6,'.nd.n3','-hit'],
+    [5.8,'.nd.n4','wait'],[2.8,'cap','巡检只负责发现'],[5.8,'cap','停在这里，等你点头'],
+    [6.6,cursorTo('.nd.n4')],[7.6,click],[7.8,'.nd.n4','-wait'],[7.8,'.nd.n4','ok'],[8.1,'cap','点了头，才交给设计线去造'],
+    [9.0,'.nd.n5','hit'],[9.8,'.nd.n5','-hit'],[9.2,'cap','造完读回来核对，再交回给你'],
+    [10.0,'.nd.n1','hit'],[10.8,'.nd.n1','-hit'],[11.0,'.nd.n2','hit'],[11.8,'.nd.n2','-hit'],[12.0,'.nd.n3','hit']],
+    tick(t, sc) {
+      const orb = sc.querySelector('.orb');
+      if (t < 2.8) { orb.style.opacity = 0; return; }
+      const deg = t < 5.8 ? -90 + (t - 2.8) * 72 : t < 8 ? 126 : 126 + (t - 8) * 72;
+      const rad = deg * Math.PI / 180;
+      orb.style.opacity = 1;
+      orb.style.left = (800 + 240 * Math.cos(rad) - 12) + 'px';
+      orb.style.top = (480 + 240 * Math.sin(rad) - 12) + 'px';
+    } },
+  { dur: 14.5, steps: [
+    [0.4,'.l1'],[0.55,'.l2'],[0.7,'.l3'],[0.85,'.l4'],[0.5,'.box'],[0.6,'.sh1'],[0.8,'cap','带走的：四样零件'],
+    [2.2,'.l1','go'],[3.1,'.l1','got'],[3.1,'.box','gulp'],[3.5,'.box','-gulp'],
+    [2.8,'.l2','go'],[3.7,'.l2','got'],[3.7,'.box','gulp'],[4.1,'.box','-gulp'],
+    [3.4,'.l3','go'],[4.3,'.l3','got'],[4.3,'.box','gulp'],[4.7,'.box','-gulp'],
+    [4.0,'.l4','go'],[4.9,'.l4','got'],[4.9,'.box','gulp'],[5.3,'.box','-gulp'],
+    [5.4,'.m1'],[5.55,'.m2'],[5.7,'.m3'],[5.85,'.m4'],[5.6,'.sh2'],[5.6,'cap','故意不带的：运行中留下的私人痕迹'],
+    [6.4,'.m1','go'],[7.0,'.m1','deny'],[6.8,'.m2','go'],[7.4,'.m2','deny'],[7.2,'.m3','go'],[7.8,'.m3','deny'],[7.6,'.m4','go'],[8.2,'.m4','deny'],
+    [9.0,'.rb1'],[9.5,'.rb2'],[10.0,'.rb3'],[10.5,'.rb4'],[11.0,'.rb5'],[9.2,'cap','解压 ≠ 装好，每一步你自己来'],[11.8,'.rb5','hl']] },
+  { dur: 10, steps: [[0.8,'.t1'],[1.4,'.t2'],[2.0,'.t3'],[2.6,'.t4'],[3.8,'.endr']] }
+];
+TL.forEach(s => { s.steps.unshift([0.1, '.hd']); s.steps.sort((a, b) => a[0] - b[0]); });
+
+const dotsEl = document.querySelector('.dots');
+scenes.forEach((_, i) => { const d = document.createElement('span'); d.className = 'dot'; d.onclick = () => go(i); dotsEl.appendChild(d); });
+const dots = [...dotsEl.children];
+
+let cur = 0, t = 0, fired = 0, playing = true, last = null;
+
+function runStep(step, sc) {
+  const [, a, b = 'in'] = step;
+  if (typeof a === 'function') return a(sc);
+  if (a === 'cap') return cap(b);
+  sc.querySelectorAll(a).forEach(el => b[0] === '-' ? el.classList.remove(b.slice(1)) : el.classList.add(b));
+}
+
+function go(i, startAt = 0) {
+  scenes[cur].classList.remove('active');
+  cur = (i + scenes.length) % scenes.length;
+  const sc = scenes[cur];
+  sc.innerHTML = templates[cur];
+  sc.className = 'scene active';
+  t = startAt; fired = 0; cap('');
+  dots.forEach((d, k) => d.classList.toggle('on', k === cur));
+  setPlaying(true);
+}
+window.go = go;
+
+function setPlaying(p) {
+  playing = p;
+  ppBtn.textContent = p ? '❚❚' : '▶';
+  stage.querySelectorAll('.scene.active *').forEach(el => el.style.animationPlayState = p ? '' : 'paused');
+}
+
+function advance(dt) {
+  if (!playing) return;
+  t += dt;
+  const tl = TL[cur], sc = scenes[cur];
+  while (fired < tl.steps.length && tl.steps[fired][0] <= t) runStep(tl.steps[fired++], sc);
+  if (pendingCap && t >= pendingCap.at) { capEl.textContent = pendingCap.text; capEl.classList.add('show'); pendingCap = null; }
+  if (tl.tick) tl.tick(t, sc);
+  progEl.style.width = (Math.min(1, t / tl.dur) * 100) + '%';
+  if (t >= tl.dur) { if (cur < scenes.length - 1) go(cur + 1); else setPlaying(false); }
+}
+
+function frame(now) {
+  advance(last == null ? 0 : Math.min(0.1, (now - last) / 1000));
+  last = now;
+  requestAnimationFrame(frame);
+}
+
+document.getElementById('prev').onclick = () => go(cur - 1);
+document.getElementById('next').onclick = () => go(cur + 1);
+ppBtn.onclick = () => setPlaying(!playing);
+addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === 'PageDown') go(cur + 1);
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') go(cur - 1);
+  else if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
+  else if (e.key === 'f' || e.key === 'F') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+});
+
+const qs = new URLSearchParams(location.search);
+go(+qs.get('s') || 0, +qs.get('t') || 0);
+if (qs.has('render')) {
+  // 逐帧渲染：所有 CSS 动画由外部按帧推进，录视频用
+  document.getElementById('bar').style.display = 'none';
+  const pauseNew = () => document.getAnimations().forEach(a => {
+    if (a.__t === undefined) { a.pause(); a.__t = 0; a.currentTime = 0; }
+  });
+  pauseNew();
+  window.__R = {
+    durations: TL.map(s => s.dur),
+    captions: TL.map(s => s.steps.filter(x => x[1] === 'cap').map(x => x[0])),
+    step(dt) {
+      document.getAnimations().forEach(a => { if (a.__t !== undefined) { a.__t += dt * 1000; a.currentTime = a.__t; } });
+      advance(dt);
+      pauseNew();
+    },
+  };
+} else {
+  requestAnimationFrame(frame);
+}
+})();
+</script>
+</body>
+</html>
